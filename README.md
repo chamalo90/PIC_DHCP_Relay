@@ -8,3 +8,5 @@ To install sdcc and gputils :
 ==============================
   - use archives in the Misc dir
   - follow instructions on this link http://www.foditic.org/LINGI2315_14/missions/picUnixE.php
+  - Use "sudo make install" instead of "make install"
+  
