@@ -1,0 +1,11 @@
+ int_to_string(last_remote_ip.v[0], debug1);
+            int_to_string(last_remote_ip.v[1], debug2);
+            int_to_string(last_remote_ip.v[2], debug3);
+            int_to_string(last_remote_ip.v[3], debug4);
+            
+            DisplayString(0, debug1);
+            DisplayString(4, debug2);
+            DisplayString(8, debug3);
+            DisplayString(12, debug4);   
+
+TODO: Arp to fine gateway

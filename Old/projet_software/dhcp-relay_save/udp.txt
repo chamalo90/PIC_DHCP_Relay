@@ -1,0 +1,19 @@
+UDPInit
+UDPTask
+UDP_SOCKET UDPOpen(UDP_PORT this_localPort,
+                   NODE_INFO *this_remoteNode,
+                   UDP_PORT this_remotePort)
+void UDPClose(UDP_SOCKET s)
+void UDPSetTxBuffer(WORD wOffset)
+void UDPSetRxBuffer(WORD wOffset)
+WORD UDPIsPutReady(UDP_SOCKET s)
+BOOL UDPPut(BYTE v)
+WORD UDPPutArray(BYTE *cData, WORD wDataLen)
+BYTE* UDPPutString(BYTE *strData)
+void UDPFlush(void)
+WORD UDPIsGetReady(UDP_SOCKET s)
+BOOL UDPGet(BYTE *v)
+WORD UDPGetArray(BYTE *cData, WORD wDataLen)
+void UDPDiscard(void)
+BOOL UDPProcess(NODE_INFO *remoteNode, IP_ADDR *localIP, WORD len)
+static UDP_SOCKET FindMatchingSocket(UDP_HEADER *h, NODE_INFO *remoteNode,IP_ADDR *localIP)
