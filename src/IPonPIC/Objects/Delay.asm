@@ -1,7 +1,7 @@
 ;--------------------------------------------------------
 ; File Created by SDCC : free open source ANSI-C Compiler
-; Version 2.9.4 #5595 (Dec 17 2009) (UNIX)
-; This file was generated Mon Mar 15 11:43:29 2010
+; Version 2.9.4 #5595 (May 13 2013) (UNIX)
+; This file was generated Wed Apr 23 15:31:24 2014
 ;--------------------------------------------------------
 ; PIC16 port for the Microchip 16-bit core micros
 ;--------------------------------------------------------
@@ -449,8 +449,8 @@
 
 
 ; Statistics:
-; code size:	   -1 (0xffffffff) bytes (3276800.00%)
-;           	2147483647 (0x7fffffff) words
+; code size:	   -1 (0xffffffffffffffff) bytes (14073748835532800.00%)
+;           	9223372036854775807 (0x7fffffffffffffff) words
 ; udata size:	    0 (0x0000) bytes ( 0.00%)
 ; access size:	    0 (0x0000) bytes
 
