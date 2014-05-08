@@ -121,6 +121,41 @@
 APP_CONFIG AppConfig;
 BYTE AN0String[8];
 
+// Represents structure for a known client
+typedef struct{
+    IP_ADDR ip;
+    MAC_ADDR mac;
+    unsigned int terms_missed;
+    DWORD client_leasetime;
+    DWORD server_leasetime;
+} POOL_ITEM;
+
+
+#define DHCP_BROADCAST (28u)
+
+//DHCP IP
+#define DHCP_IP8 192
+#define DHCP_IP16 168
+#define DHCP_IP24 88
+#define DHCP_IP32 2
+
+//TIME ON NETWORKs
+#define CLIENT_LEASE_TIME 300 //5 minutes of lease time in seconds
+#define SERVER_LEASE_TIME 300 //5 minutes of lease time in seconds
+#define OVERFLOW_TIME 61 // To activate leaseTimeCheck every minute
+#define MAX_TERMS_MISSED 5 
+
+BYTE MAC_ADDR_GATEWAY [6];
+
+
+#define MAX_CLIENT 10
+POOL_ITEM pool[POOL_SIZE];
+unsigned int seconds = 0;
+
+
+
+
+
 
 // Private helper functions.
 // These may or may not be present in all applications.
@@ -157,6 +192,7 @@ void DisplayWORD(BYTE pos, WORD w); //write WORDs on LCD for debugging
 
 
 //HighISR	
+ 
     #if defined(HI_TECH_C)
         void interrupt HighISR(void)
     #elif defined(__SDCC__)
@@ -178,6 +214,237 @@ void DisplayWORD(BYTE pos, WORD w); //write WORDs on LCD for debugging
 #endif
 
 const char* message;  //pointer to message to display on LCD
+/*******************************************************************
+**            Utility Functions 
+********************************************************************/
+// Compare MAC m1 & m2, return TRUE if they are equals
+BOOL mac_cmp(MAC_ADDR *m1, MAC_ADDR *m2){
+    int i;
+    for(i=0; i<6; i++){
+        if(m1->v[i] != m2->v[i]){
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+// Compare IP ip1 & ip2, return TRUE if they are equals
+BOOL ip_cmp(IP_ADDR *ip1, IP_ADDR *ip2){
+    int i;
+    for(i=0; i<4; i++){
+        if(ip1->v[i] != ip2->v[i]){
+            return FALSE;
+        }
+    }   
+    return TRUE;
+}
+
+/*******************************************************************
+**            Server Functions 
+********************************************************************/
+// Get MAC from Server
+void get_MAC_from_serv(){
+  MAC_ADDR gw_mac;
+  BOOL b;
+  int i,j;
+  
+  for (i=0; i<100; i++) {
+    StackTask();
+    ARPResolve(&AppConfig.MyGateway);
+    for(j=0;j<5000; j++) {
+      if(ARPIsResolved(&AppConfig.MyGateway, &gw_mac)) {
+        memcpy(MAC_ADDR_GATEWAY, &gw_mac, 6);
+        return;     
+      }
+    }
+  }
+  DisplayString(0, "No MAC : ARP    Request Failed");
+}
+
+
+void setDhcpIp(IP_ADDR *ip){
+    ip->v[0] = DHCP_IP8;
+    ip->v[1] = DHCP_IP16;
+    ip->v[2] = DHCP_IP24;
+    ip->v[3] = DHCP_IP32;
+}
+
+// Send a release msg to the server and remove the specified pool_item 
+void sendRelease(UDP_SOCKET *send_s_socket, POOL_ITEM *it){
+    BOOTP_HEADER bootp_header;
+    while(!UDPIsPutReady(*send_s_socket));
+    set_mac_to_dhcp_server();
+    forgeBootpHeaderAck(&bootp_header, 0, &it.ip, &it.ip, &it.mac);
+    build_bootp(&bootp_header, send_s_socket);
+    UDPPut(DHCP_RELEASE_MESSAGE);
+
+    UDPPut(DHCP_SERVER_IDENTIFIER);
+    UDPPut(sizeof(IP_ADDR));
+    UDPPutArray((BYTE*)&AppConfig.MyIPAddr, sizeof(IP_ADDR));
+
+    end_dhcp();
+
+    UDPFlush();
+
+    initializeItem(it); // Corresponds to RemoveFromPool action in ASG
+}
+
+/*******************************************************************
+**            Packets builder Functions 
+********************************************************************/
+
+void buildHeader(BYTE *header, unsigned int *dhcp_header_length, POOL_ITEM *it){
+    int i;
+    
+    header[0] = DHCP_MESSAGE_TYPE;
+    header[1] = DHCP_MESSAGE_TYPE_LEN;
+    header[2] = DHCP_REQUEST_MESSAGE;
+    header[3] = DHCP_PARAM_REQUEST_IP_ADDRESS;
+    header[4] = DHCP_PARAM_REQUEST_IP_ADDRESS_LEN;
+    for(i=5; i<9; i++){
+        header[i] = it->ip.v[i-5];
+    }
+    header[9] = DHCP_SERVER_IDENTIFIER;
+    header[10] = sizeof(IP_ADDR);
+    *header_length = 15;
+}
+
+
+/*******************************************************************
+**            Relay Functions 
+********************************************************************/
+
+// Initialize pool - Empty data for future clients
+void initializeClientDB(){
+    int i;
+    for(i=0; i<MAX_CLIENT; i++){
+        initializeItem(&pool[i]);
+    }
+}
+
+// Initialize item from the pool - Put all data to 0
+void initializeItem(POOL_ITEM *p){
+    int j;
+    for(j=0; j<4; j++){
+        p->ip.v[j] = 0;
+    }
+
+
+    for(j=0; j<6; j++){
+        p->mac.v[j] = 0;
+    }
+    p->terms_missed = 0;
+    p->client_leasetime = 0;
+    p->server_leasetime = 0;
+}
+
+// Check if a pool item is currently used
+BOOL isPoolItemUsed(POOL_ITEM *it){
+    int i;
+    for(i=0; i<6; i++){
+        if(it->mac.v[i] != 0){
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+// Update lease times
+void leaseTimeCheck(UDP_SOCKET *send_s_socket){
+    int i;
+    for(i=0; i<MAX_CLIENT; i++){
+        if(!isPoolItemUsed(&pool[i])){
+        
+            if(pool[i].server_leasetime < 60)
+                pool[i].server_leasetime = 0;
+            else pool[i].server_leasetime -= 60;
+            
+            if(pool[i].client_leasetime <= 60){
+                pool[i].terms_missed++;
+                pool[i].client_leasetime = CLIENT_LEASE_TIME;
+                
+                if(pool[i].terms_missed >= 5){
+                
+                    sendRelease(send_s_socket, &pool[i]);
+                    continue; 
+                }
+            }
+            else pool[i].client_leasetime -= 60;            
+            if(pool[i].server_leasetime <= SERVER_LEASE_TIME){
+                sendRequest(send_s_socket, &pool[i]);       
+            }
+        }
+    }
+}
+
+
+/*******************************************************************
+**            Time Functions 
+********************************************************************/
+
+//Task that will activate the lease time check every minute
+void timeCheck(UDP_SOCKET *send_s_socket){
+    TICK current;
+    static TICK previous = 0;
+    static TICK counter = 0;
+    current = TickConvertToMilliseconds(TickGet());
+    
+    if (current-previous >= 1000 || current < previous) {
+        previous += 1000;
+        counter++;
+        if(counter%OVERFLOW_TIME == 0){
+            leaseTimeCheck(send_s_socket);
+            counter = 0;
+        }
+    }
+}
+
+
+/*******************************************************************
+**            Mains Functions 
+********************************************************************/
+
+// Cycle of all tasks that have to be done by a DHCP Relay
+void doDhcpOperations(BYTE *MAC_gateway){
+    UDP_SOCKET send_s_socket;
+    UDP_SOCKET send_c_socket;
+    UDP_SOCKET receiver_socket;
+    
+    
+    IP_ADDR ip_last_pckt;
+    IP_ADDR server_ip;
+    setDhcpIp(&server_ip);
+
+    WORD counter;
+    
+    send_s_socket = UDPOpen(0, NULL, 67);
+    send_c_socket = UDPOpen(0, NULL, 68);
+    receiver_socket = UDPOpen(67, NULL, 0);
+    
+    if(send_s_socket == INVALID_UDP_SOCKET ||
+       receiver_socket == INVALID_UDP_SOCKET ||
+       send_c_socket == INVALID_UDP_SOCKET){
+        DisplayString (0,"Fail to create  socket");
+        DelayMs(2000);
+        return;
+    }
+
+    DisplayString (0,"Entering Task Cycle"); // debugging
+    DelayMs(1000);
+    while(1){
+        StackTaskModified(&ip_last_pckt);       
+        timeCheck(&send_s_socket);
+        
+    if(counter = UDPIsGetReady(receiver_socket)){
+      if(ip_cmp(&ip_last_pckt, &server_ip)){
+                handle_server_msg(&send_c_socket, &receiver_socket);
+            }
+            else{
+                handle_client_msg(&send_s_socket, &send_c_socket, &receiver_socket, MAC_gateway, &ip_last_pckt);
+            }
+        }    
+    }   
+}
 
 //
 // Main application entry point.
@@ -190,12 +457,7 @@ void main(void)
 int main(void)
 #endif
 {
-static TICK t = 0; 
-TICK nt = 0;  //TICK is DWORD, thus 32 bits
-BYTE loopctr = 0;  //ML Debugging
-WORD lloopctr = 14; //ML Debugging
-
-static DWORD dwLastIP = 0;
+    BYTE MAC_GATEWAY[6];
 	
     // Initialize interrupts and application specific hardware
     InitializeBoard();
@@ -203,7 +465,6 @@ static DWORD dwLastIP = 0;
     // Initialize and display message on the LCD
     LCDInit();
     DelayMs(100);
-    DisplayString (0,"Olimex"); //first arg is start position on 32 pos LCD
 
     // Initialize Timer0, and low priority interrupts, used as clock.
     TickInit();
@@ -215,57 +476,12 @@ static DWORD dwLastIP = 0;
     // application modules (HTTP, SNMP, etc.)
     StackInit();
 
+    //Iniatize pool and DHCP informations
+    DisplayString(0,"INGI2315 Init");
+    get_MAC_from_serv();
+    initializeClientDB();
 
-    // Now that all items are initialized, begin the co-operative
-    // multitasking loop.  This infinite loop will continuously 
-    // execute all stack-related tasks, as well as your own
-    // application's functions.  Custom functions should be added
-    // at the end of this loop.
-
-    // Note that this is a "co-operative multi-tasking" mechanism
-    // where every task performs its tasks (whether all in one shot
-    // or part of it) and returns so that other tasks can do their
-    // job.
-    // If a task needs very long time to do its job, it must be broken
-    // down into smaller pieces so that other tasks can have CPU time.
-
-
-    while(1)
-    {
-
-         // Blink LED0 (right most one) every second.
-        nt =  TickGetDiv256();
-        if((nt - t) >= (DWORD)(TICK_SECOND/1024ul))
-        {
-            t = nt;
-            LED0_IO ^= 1;
-            ClrWdt();  //Clear the watchdog
-        }
-
-        // This task performs normal stack task including checking
-        // for incoming packet, type of packet and calling
-        // appropriate stack entity to process it.
-        StackTask();
-        
-        // This tasks invokes each of the core stack application tasks
-	//        StackApplications(); //all except dhcp, ping and arp
-
-        // Process application specific tasks here.
-
-        // If the local IP address has changed (ex: due to DHCP lease change)
-        // write the new IP address to the LCD display, UART, and Announce 
-        // service
-	if(dwLastIP != AppConfig.MyIPAddr.Val)
-	{
-	     dwLastIP = AppConfig.MyIPAddr.Val;
-             #if defined(__SDCC__)
-                 DisplayIPValue(dwLastIP); // must be a WORD: sdcc does not
-                                           // pass aggregates
-             #else
-                 DisplayIPValue(AppConfig.MyIPAddr);
-             #endif
- 	}
-    }//end of while(1)
+    doDhcpOperations(MAC_GATEWAY);
 }//end of main()
 
 /*************************************************

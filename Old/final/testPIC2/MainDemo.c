@@ -25,8 +25,8 @@ BYTE AN0String[8];
 typedef struct{
     IP_ADDR ip;
     MAC_ADDR mac;
-    DWORD client_deadline;
-    DWORD server_deadline;
+    DWORD client_leasetime;
+    DWORD server_leasetime;
     unsigned int miss_counter;
 } POOL_ELEMENT;
 
