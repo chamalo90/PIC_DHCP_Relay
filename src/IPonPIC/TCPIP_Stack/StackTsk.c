@@ -207,10 +207,10 @@ void StackInit(void)
  *
  ********************************************************************/
 void StackTask(void){
-	StackTaskModified()
+	StackTaskModified(NULL);
 }
 
-void StackTask(IP_ADDR *ip)
+void StackTaskModified(IP_ADDR *ip)
 {
     WORD dataCount;
     IP_ADDR tempLocalIP;
@@ -354,11 +354,12 @@ void StackTask(IP_ADDR *ip)
 				{
 //			  DisplayString(8,"gotUDP");  //ML
 					// Stop processing packets if we came upon a UDP frame with application data in it
-					if(UDPProcess(&remoteNode, &tempLocalIP, dataCount))
+					if(UDPProcess(&remoteNode, &tempLocalIP, dataCount)){
 						  if(ip != NULL){
 					        memcpy(ip, &remoteNode.IPAddr, sizeof(remoteNode.IPAddr));
 					    }
 						return;
+					}
 				}
 				#endif
 

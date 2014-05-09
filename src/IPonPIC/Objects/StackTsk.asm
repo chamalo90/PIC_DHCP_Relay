@@ -1,7 +1,7 @@
 ;--------------------------------------------------------
 ; File Created by SDCC : free open source ANSI-C Compiler
 ; Version 2.9.4 #5595 (May 13 2013) (UNIX)
-; This file was generated Wed Apr 23 15:31:25 2014
+; This file was generated Fri May  9 05:20:56 2014
 ;--------------------------------------------------------
 ; PIC16 port for the Microchip 16-bit core micros
 ;--------------------------------------------------------
@@ -14,6 +14,7 @@
 ;--------------------------------------------------------
 	global _StackInit
 	global _StackTask
+	global _StackTaskModified
 	global _StackApplications
 	global _remoteNode
 
@@ -446,6 +447,7 @@
 	extern _TOSH
 	extern _TOSU
 	extern _srand
+	extern _memcpy
 	extern _GenerateRandomDWORD
 	extern _MACInit
 	extern _MACIsLinked
@@ -471,12 +473,13 @@ FSR1L	equ	0xfe1
 FSR2L	equ	0xfd9
 POSTDEC1	equ	0xfe5
 PREINC1	equ	0xfe4
+PLUSW2	equ	0xfdb
 PRODL	equ	0xff3
 PRODH	equ	0xff4
 
 
 	idata
-_StackTask_bLastLinkState_2_2	db	0x00
+_StackTaskModified_bLastLinkState_2_2	db	0x00
 
 
 ; Internal registers
@@ -495,24 +498,27 @@ r0x0a	res	1
 r0x0b	res	1
 r0x0c	res	1
 r0x0d	res	1
+r0x0e	res	1
+r0x0f	res	1
+r0x10	res	1
 
 udata_StackTsk_0	udata
 _smStack	res	1
 
 udata_StackTsk_1	udata
-_StackTask_tempLocalIP_1_1	res	4
+_StackTaskModified_tempLocalIP_1_1	res	4
 
 udata_StackTsk_2	udata
 _remoteNode	res	10
 
 udata_StackTsk_3	udata
-_StackTask_cFrameType_1_1	res	1
+_StackTaskModified_cFrameType_1_1	res	1
 
 udata_StackTsk_4	udata
-_StackTask_cIPFrameType_1_1	res	1
+_StackTaskModified_cIPFrameType_1_1	res	1
 
 udata_StackTsk_5	udata
-_StackTask_dataCount_1_1	res	2
+_StackTaskModified_dataCount_1_1	res	2
 
 ;--------------------------------------------------------
 ; global & static initialisations
@@ -521,17 +527,17 @@ _StackTask_dataCount_1_1	res	2
 ; ; Starting pCode block
 S_StackTsk__StackApplications	code
 _StackApplications:
-;	.line	378; TCPIP_Stack/StackTsk.c	void StackApplications(void)
+;	.line	386; TCPIP_Stack/StackTsk.c	void StackApplications(void)
 	MOVFF	FSR2L, POSTDEC1
 	MOVFF	FSR1L, FSR2L
-;	.line	435; TCPIP_Stack/StackTsk.c	}
+;	.line	443; TCPIP_Stack/StackTsk.c	}
 	MOVFF	PREINC1, FSR2L
 	RETURN	
 
 ; ; Starting pCode block
-S_StackTsk__StackTask	code
-_StackTask:
-;	.line	209; TCPIP_Stack/StackTsk.c	void StackTask(void)
+S_StackTsk__StackTaskModified	code
+_StackTaskModified:
+;	.line	213; TCPIP_Stack/StackTsk.c	void StackTaskModified(IP_ADDR *ip)
 	MOVFF	FSR2L, POSTDEC1
 	MOVFF	FSR1L, FSR2L
 	MOVFF	r0x00, POSTDEC1
@@ -548,165 +554,180 @@ _StackTask:
 	MOVFF	r0x0b, POSTDEC1
 	MOVFF	r0x0c, POSTDEC1
 	MOVFF	r0x0d, POSTDEC1
+	MOVFF	r0x0e, POSTDEC1
+	MOVFF	r0x0f, POSTDEC1
+	MOVFF	r0x10, POSTDEC1
+	MOVLW	0x02
+	MOVFF	PLUSW2, r0x00
+	MOVLW	0x03
+	MOVFF	PLUSW2, r0x01
+	MOVLW	0x04
+	MOVFF	PLUSW2, r0x02
 	BANKSEL	(_AppConfig + 44)
-;	.line	229; TCPIP_Stack/StackTsk.c	if(AppConfig.Flags.bIsDHCPEnabled)
+;	.line	233; TCPIP_Stack/StackTsk.c	if(AppConfig.Flags.bIsDHCPEnabled)
 	BTFSS	(_AppConfig + 44), 6, B
-	BRA	_00119_DS_
-;	.line	234; TCPIP_Stack/StackTsk.c	bCurrentLinkState = MACIsLinked();
+	BRA	_00124_DS_
+;	.line	238; TCPIP_Stack/StackTsk.c	bCurrentLinkState = MACIsLinked();
 	CALL	_MACIsLinked
-	MOVWF	r0x00
-;	.line	235; TCPIP_Stack/StackTsk.c	if(bCurrentLinkState != bLastLinkState)
-	MOVF	r0x00, W
-	BANKSEL	_StackTask_bLastLinkState_2_2
-	XORWF	_StackTask_bLastLinkState_2_2, W, B
-	BNZ	_00157_DS_
-	BRA	_00115_DS_
-_00157_DS_:
-;	.line	237; TCPIP_Stack/StackTsk.c	bLastLinkState = bCurrentLinkState;
-	MOVFF	r0x00, _StackTask_bLastLinkState_2_2
-;	.line	238; TCPIP_Stack/StackTsk.c	if(!bCurrentLinkState) //we lost the MAC link
-	MOVF	r0x00, W
-	BNZ	_00115_DS_
-;	.line	240; TCPIP_Stack/StackTsk.c	AppConfig.MyIPAddr.Val = AppConfig.DefaultIPAddr.Val;
-	MOVFF	(_AppConfig + 20), r0x00
-	MOVFF	(_AppConfig + 21), r0x01
-	MOVFF	(_AppConfig + 22), r0x02
-	MOVFF	(_AppConfig + 23), r0x03
-	MOVF	r0x00, W
+	MOVWF	r0x03
+;	.line	239; TCPIP_Stack/StackTsk.c	if(bCurrentLinkState != bLastLinkState)
+	MOVF	r0x03, W
+	BANKSEL	_StackTaskModified_bLastLinkState_2_2
+	XORWF	_StackTaskModified_bLastLinkState_2_2, W, B
+	BNZ	_00165_DS_
+	BRA	_00120_DS_
+_00165_DS_:
+;	.line	241; TCPIP_Stack/StackTsk.c	bLastLinkState = bCurrentLinkState;
+	MOVFF	r0x03, _StackTaskModified_bLastLinkState_2_2
+;	.line	242; TCPIP_Stack/StackTsk.c	if(!bCurrentLinkState) //we lost the MAC link
+	MOVF	r0x03, W
+	BNZ	_00120_DS_
+;	.line	244; TCPIP_Stack/StackTsk.c	AppConfig.MyIPAddr.Val = AppConfig.DefaultIPAddr.Val;
+	MOVFF	(_AppConfig + 20), r0x03
+	MOVFF	(_AppConfig + 21), r0x04
+	MOVFF	(_AppConfig + 22), r0x05
+	MOVFF	(_AppConfig + 23), r0x06
+	MOVF	r0x03, W
 	BANKSEL	_AppConfig
 	MOVWF	_AppConfig, B
-	MOVF	r0x01, W
+	MOVF	r0x04, W
 	BANKSEL	(_AppConfig + 1)
 	MOVWF	(_AppConfig + 1), B
-	MOVF	r0x02, W
+	MOVF	r0x05, W
 	BANKSEL	(_AppConfig + 2)
 	MOVWF	(_AppConfig + 2), B
-	MOVF	r0x03, W
+	MOVF	r0x06, W
 	BANKSEL	(_AppConfig + 3)
 	MOVWF	(_AppConfig + 3), B
-;	.line	241; TCPIP_Stack/StackTsk.c	AppConfig.MyMask.Val = AppConfig.DefaultMask.Val;
-	MOVFF	(_AppConfig + 24), r0x00
-	MOVFF	(_AppConfig + 25), r0x01
-	MOVFF	(_AppConfig + 26), r0x02
-	MOVFF	(_AppConfig + 27), r0x03
-	MOVF	r0x00, W
+;	.line	245; TCPIP_Stack/StackTsk.c	AppConfig.MyMask.Val = AppConfig.DefaultMask.Val;
+	MOVFF	(_AppConfig + 24), r0x03
+	MOVFF	(_AppConfig + 25), r0x04
+	MOVFF	(_AppConfig + 26), r0x05
+	MOVFF	(_AppConfig + 27), r0x06
+	MOVF	r0x03, W
 	BANKSEL	(_AppConfig + 4)
 	MOVWF	(_AppConfig + 4), B
-	MOVF	r0x01, W
+	MOVF	r0x04, W
 	BANKSEL	(_AppConfig + 5)
 	MOVWF	(_AppConfig + 5), B
-	MOVF	r0x02, W
+	MOVF	r0x05, W
 	BANKSEL	(_AppConfig + 6)
 	MOVWF	(_AppConfig + 6), B
-	MOVF	r0x03, W
+	MOVF	r0x06, W
 	BANKSEL	(_AppConfig + 7)
 	MOVWF	(_AppConfig + 7), B
 	BANKSEL	(_AppConfig + 44)
-;	.line	242; TCPIP_Stack/StackTsk.c	AppConfig.Flags.bInConfigMode = TRUE;
+;	.line	246; TCPIP_Stack/StackTsk.c	AppConfig.Flags.bInConfigMode = TRUE;
 	BSF	(_AppConfig + 44), 7, B
-;	.line	243; TCPIP_Stack/StackTsk.c	DHCPInit(0);
+;	.line	247; TCPIP_Stack/StackTsk.c	DHCPInit(0);
 	MOVLW	0x00
 	MOVWF	POSTDEC1
 	CALL	_DHCPInit
 	INCF	FSR1L, F
-_00115_DS_:
-;	.line	251; TCPIP_Stack/StackTsk.c	DHCPTask();
+_00120_DS_:
+;	.line	255; TCPIP_Stack/StackTsk.c	DHCPTask();
 	CALL	_DHCPTask
-;	.line	253; TCPIP_Stack/StackTsk.c	if(DHCPIsBound(0))
+;	.line	257; TCPIP_Stack/StackTsk.c	if(DHCPIsBound(0))
 	MOVLW	0x00
 	MOVWF	POSTDEC1
 	CALL	_DHCPIsBound
-	MOVWF	r0x00
+	MOVWF	r0x03
 	INCF	FSR1L, F
-	MOVF	r0x00, W
-	BZ	_00119_DS_
+	MOVF	r0x03, W
+	BZ	_00124_DS_
 	BANKSEL	(_AppConfig + 44)
-;	.line	254; TCPIP_Stack/StackTsk.c	AppConfig.Flags.bInConfigMode = FALSE;
+;	.line	258; TCPIP_Stack/StackTsk.c	AppConfig.Flags.bInConfigMode = FALSE;
 	BCF	(_AppConfig + 44), 7, B
-_00119_DS_:
-;	.line	270; TCPIP_Stack/StackTsk.c	UDPTask();
+_00124_DS_:
+;	.line	274; TCPIP_Stack/StackTsk.c	UDPTask();
 	CALL	_UDPTask
-_00138_DS_:
-;	.line	285; TCPIP_Stack/StackTsk.c	UDPDiscard();
+_00145_DS_:
+;	.line	289; TCPIP_Stack/StackTsk.c	UDPDiscard();
 	CALL	_UDPDiscard
-;	.line	290; TCPIP_Stack/StackTsk.c	if(!MACGetHeader(&remoteNode.MACAddr, &cFrameType))
+;	.line	294; TCPIP_Stack/StackTsk.c	if(!MACGetHeader(&remoteNode.MACAddr, &cFrameType))
 	MOVLW	HIGH(_remoteNode + 4)
-	MOVWF	r0x01
-	MOVLW	LOW(_remoteNode + 4)
-	MOVWF	r0x00
-	MOVLW	0x80
-	MOVWF	r0x02
-	MOVLW	HIGH(_StackTask_cFrameType_1_1)
 	MOVWF	r0x04
-	MOVLW	LOW(_StackTask_cFrameType_1_1)
+	MOVLW	LOW(_remoteNode + 4)
 	MOVWF	r0x03
 	MOVLW	0x80
 	MOVWF	r0x05
+	MOVLW	HIGH(_StackTaskModified_cFrameType_1_1)
+	MOVWF	r0x07
+	MOVLW	LOW(_StackTaskModified_cFrameType_1_1)
+	MOVWF	r0x06
+	MOVLW	0x80
+	MOVWF	r0x08
+	MOVF	r0x08, W
+	MOVWF	POSTDEC1
+	MOVF	r0x07, W
+	MOVWF	POSTDEC1
+	MOVF	r0x06, W
+	MOVWF	POSTDEC1
 	MOVF	r0x05, W
 	MOVWF	POSTDEC1
 	MOVF	r0x04, W
 	MOVWF	POSTDEC1
 	MOVF	r0x03, W
 	MOVWF	POSTDEC1
-	MOVF	r0x02, W
-	MOVWF	POSTDEC1
-	MOVF	r0x01, W
-	MOVWF	POSTDEC1
-	MOVF	r0x00, W
-	MOVWF	POSTDEC1
 	CALL	_MACGetHeader
-	MOVWF	r0x00
+	MOVWF	r0x03
 	MOVLW	0x06
 	ADDWF	FSR1L, F
-	MOVF	r0x00, W
+	MOVF	r0x03, W
 	BTFSC	STATUS, 2
-	BRA	_00140_DS_
-;	.line	294; TCPIP_Stack/StackTsk.c	switch(cFrameType)
-	MOVFF	_StackTask_cFrameType_1_1, r0x00
-	CLRF	r0x01
-	MOVF	r0x00, W
-	BNZ	_00159_DS_
-	MOVF	r0x01, W
-	BZ	_00123_DS_
-_00159_DS_:
-	MOVF	r0x00, W
+	BRA	_00147_DS_
+;	.line	298; TCPIP_Stack/StackTsk.c	switch(cFrameType)
+	MOVFF	_StackTaskModified_cFrameType_1_1, r0x03
+	CLRF	r0x04
+	MOVF	r0x03, W
+	BNZ	_00167_DS_
+	MOVF	r0x04, W
+	BZ	_00128_DS_
+_00167_DS_:
+	MOVF	r0x03, W
 	XORLW	0x06
-	BNZ	_00160_DS_
-	MOVF	r0x01, W
-	BZ	_00161_DS_
-_00160_DS_:
-	BRA	_00138_DS_
-_00161_DS_:
-;	.line	298; TCPIP_Stack/StackTsk.c	ARPProcess();
+	BNZ	_00168_DS_
+	MOVF	r0x04, W
+	BZ	_00169_DS_
+_00168_DS_:
+	BRA	_00145_DS_
+_00169_DS_:
+;	.line	302; TCPIP_Stack/StackTsk.c	ARPProcess();
 	CALL	_ARPProcess
-;	.line	299; TCPIP_Stack/StackTsk.c	break;
-	BRA	_00138_DS_
-_00123_DS_:
-;	.line	303; TCPIP_Stack/StackTsk.c	if(!IPGetHeader(&tempLocalIP, &remoteNode, &cIPFrameType, &dataCount))
-	MOVLW	HIGH(_StackTask_tempLocalIP_1_1)
-	MOVWF	r0x01
-	MOVLW	LOW(_StackTask_tempLocalIP_1_1)
-	MOVWF	r0x00
-	MOVLW	0x80
-	MOVWF	r0x02
-	MOVLW	HIGH(_remoteNode)
+;	.line	303; TCPIP_Stack/StackTsk.c	break;
+	BRA	_00145_DS_
+_00128_DS_:
+;	.line	307; TCPIP_Stack/StackTsk.c	if(!IPGetHeader(&tempLocalIP, &remoteNode, &cIPFrameType, &dataCount))
+	MOVLW	HIGH(_StackTaskModified_tempLocalIP_1_1)
 	MOVWF	r0x04
-	MOVLW	LOW(_remoteNode)
+	MOVLW	LOW(_StackTaskModified_tempLocalIP_1_1)
 	MOVWF	r0x03
 	MOVLW	0x80
 	MOVWF	r0x05
-	MOVLW	HIGH(_StackTask_cIPFrameType_1_1)
+	MOVLW	HIGH(_remoteNode)
 	MOVWF	r0x07
-	MOVLW	LOW(_StackTask_cIPFrameType_1_1)
+	MOVLW	LOW(_remoteNode)
 	MOVWF	r0x06
 	MOVLW	0x80
 	MOVWF	r0x08
-	MOVLW	HIGH(_StackTask_dataCount_1_1)
+	MOVLW	HIGH(_StackTaskModified_cIPFrameType_1_1)
 	MOVWF	r0x0a
-	MOVLW	LOW(_StackTask_dataCount_1_1)
+	MOVLW	LOW(_StackTaskModified_cIPFrameType_1_1)
 	MOVWF	r0x09
 	MOVLW	0x80
 	MOVWF	r0x0b
+	MOVLW	HIGH(_StackTaskModified_dataCount_1_1)
+	MOVWF	r0x0d
+	MOVLW	LOW(_StackTaskModified_dataCount_1_1)
+	MOVWF	r0x0c
+	MOVLW	0x80
+	MOVWF	r0x0e
+	MOVF	r0x0e, W
+	MOVWF	POSTDEC1
+	MOVF	r0x0d, W
+	MOVWF	POSTDEC1
+	MOVF	r0x0c, W
+	MOVWF	POSTDEC1
 	MOVF	r0x0b, W
 	MOVWF	POSTDEC1
 	MOVF	r0x0a, W
@@ -725,167 +746,196 @@ _00123_DS_:
 	MOVWF	POSTDEC1
 	MOVF	r0x03, W
 	MOVWF	POSTDEC1
-	MOVF	r0x02, W
-	MOVWF	POSTDEC1
-	MOVF	r0x01, W
-	MOVWF	POSTDEC1
-	MOVF	r0x00, W
-	MOVWF	POSTDEC1
 	CALL	_IPGetHeader
-	MOVWF	r0x00
+	MOVWF	r0x03
 	MOVLW	0x0c
 	ADDWF	FSR1L, F
-	MOVF	r0x00, W
-	BTFSC	STATUS, 2
-	BRA	_00138_DS_
-;	.line	307; TCPIP_Stack/StackTsk.c	if(cIPFrameType == IP_PROT_ICMP)
-	MOVFF	_StackTask_cIPFrameType_1_1, r0x00
-	CLRF	r0x01
-	MOVF	r0x00, W
-	XORLW	0x01
-	BNZ	_00162_DS_
-	MOVF	r0x01, W
-	BZ	_00163_DS_
-_00162_DS_:
-	BRA	_00131_DS_
-_00163_DS_:
-;	.line	328; TCPIP_Stack/StackTsk.c	if( (tempLocalIP.Val == AppConfig.MyIPAddr.Val) ||
-	MOVFF	_StackTask_tempLocalIP_1_1, r0x02
-	MOVFF	(_StackTask_tempLocalIP_1_1 + 1), r0x03
-	MOVFF	(_StackTask_tempLocalIP_1_1 + 2), r0x04
-	MOVFF	(_StackTask_tempLocalIP_1_1 + 3), r0x05
-	MOVFF	_AppConfig, r0x06
-	MOVFF	(_AppConfig + 1), r0x07
-	MOVFF	(_AppConfig + 2), r0x08
-	MOVFF	(_AppConfig + 3), r0x09
-	MOVF	r0x02, W
-	XORWF	r0x06, W
-	BNZ	_00165_DS_
 	MOVF	r0x03, W
-	XORWF	r0x07, W
-	BNZ	_00165_DS_
+	BTFSC	STATUS, 2
+	BRA	_00145_DS_
+;	.line	311; TCPIP_Stack/StackTsk.c	if(cIPFrameType == IP_PROT_ICMP)
+	MOVFF	_StackTaskModified_cIPFrameType_1_1, r0x03
+	CLRF	r0x04
+	MOVF	r0x03, W
+	XORLW	0x01
+	BNZ	_00170_DS_
 	MOVF	r0x04, W
-	XORWF	r0x08, W
-	BNZ	_00165_DS_
+	BZ	_00171_DS_
+_00170_DS_:
+	BRA	_00136_DS_
+_00171_DS_:
+;	.line	332; TCPIP_Stack/StackTsk.c	if( (tempLocalIP.Val == AppConfig.MyIPAddr.Val) ||
+	MOVFF	_StackTaskModified_tempLocalIP_1_1, r0x05
+	MOVFF	(_StackTaskModified_tempLocalIP_1_1 + 1), r0x06
+	MOVFF	(_StackTaskModified_tempLocalIP_1_1 + 2), r0x07
+	MOVFF	(_StackTaskModified_tempLocalIP_1_1 + 3), r0x08
+	MOVFF	_AppConfig, r0x09
+	MOVFF	(_AppConfig + 1), r0x0a
+	MOVFF	(_AppConfig + 2), r0x0b
+	MOVFF	(_AppConfig + 3), r0x0c
 	MOVF	r0x05, W
 	XORWF	r0x09, W
-	BNZ	_00165_DS_
-	BRA	_00126_DS_
-_00165_DS_:
-;	.line	329; TCPIP_Stack/StackTsk.c	(tempLocalIP.Val == 0xFFFFFFFF) ||
-	MOVF	r0x02, W
-	XORLW	0xff
-	BNZ	_00167_DS_
-	MOVF	r0x03, W
-	XORLW	0xff
-	BNZ	_00167_DS_
-	MOVF	r0x04, W
-	XORLW	0xff
-	BNZ	_00167_DS_
+	BNZ	_00173_DS_
+	MOVF	r0x06, W
+	XORWF	r0x0a, W
+	BNZ	_00173_DS_
+	MOVF	r0x07, W
+	XORWF	r0x0b, W
+	BNZ	_00173_DS_
+	MOVF	r0x08, W
+	XORWF	r0x0c, W
+	BNZ	_00173_DS_
+	BRA	_00131_DS_
+_00173_DS_:
+;	.line	333; TCPIP_Stack/StackTsk.c	(tempLocalIP.Val == 0xFFFFFFFF) ||
 	MOVF	r0x05, W
 	XORLW	0xff
-	BZ	_00126_DS_
-_00167_DS_:
+	BNZ	_00175_DS_
+	MOVF	r0x06, W
+	XORLW	0xff
+	BNZ	_00175_DS_
+	MOVF	r0x07, W
+	XORLW	0xff
+	BNZ	_00175_DS_
+	MOVF	r0x08, W
+	XORLW	0xff
+	BZ	_00131_DS_
+_00175_DS_:
 	BANKSEL	(_AppConfig + 4)
-;	.line	330; TCPIP_Stack/StackTsk.c	(tempLocalIP.Val == ((AppConfig.MyIPAddr.Val & AppConfig.MyMask.Val) | ~AppConfig.MyMask.Val)))
+;	.line	334; TCPIP_Stack/StackTsk.c	(tempLocalIP.Val == ((AppConfig.MyIPAddr.Val & AppConfig.MyMask.Val) | ~AppConfig.MyMask.Val)))
 	MOVF	(_AppConfig + 4), W, B
-	ANDWF	r0x06, F
+	ANDWF	r0x09, F
 	BANKSEL	(_AppConfig + 5)
 	MOVF	(_AppConfig + 5), W, B
-	ANDWF	r0x07, F
+	ANDWF	r0x0a, F
 	BANKSEL	(_AppConfig + 6)
 	MOVF	(_AppConfig + 6), W, B
-	ANDWF	r0x08, F
+	ANDWF	r0x0b, F
 	BANKSEL	(_AppConfig + 7)
 	MOVF	(_AppConfig + 7), W, B
-	ANDWF	r0x09, F
+	ANDWF	r0x0c, F
 	BANKSEL	(_AppConfig + 4)
 	COMF	(_AppConfig + 4), W, B
-	MOVWF	r0x0a
+	MOVWF	r0x0d
 	BANKSEL	(_AppConfig + 5)
 	COMF	(_AppConfig + 5), W, B
-	MOVWF	r0x0b
+	MOVWF	r0x0e
 	BANKSEL	(_AppConfig + 6)
 	COMF	(_AppConfig + 6), W, B
-	MOVWF	r0x0c
+	MOVWF	r0x0f
 	BANKSEL	(_AppConfig + 7)
 	COMF	(_AppConfig + 7), W, B
-	MOVWF	r0x0d
-	MOVF	r0x0a, W
-	IORWF	r0x06, F
-	MOVF	r0x0b, W
-	IORWF	r0x07, F
-	MOVF	r0x0c, W
-	IORWF	r0x08, F
+	MOVWF	r0x10
 	MOVF	r0x0d, W
 	IORWF	r0x09, F
-	MOVF	r0x02, W
-	XORWF	r0x06, W
-	BNZ	_00170_DS_
-	MOVF	r0x03, W
-	XORWF	r0x07, W
-	BNZ	_00170_DS_
-	MOVF	r0x04, W
-	XORWF	r0x08, W
-	BNZ	_00170_DS_
+	MOVF	r0x0e, W
+	IORWF	r0x0a, F
+	MOVF	r0x0f, W
+	IORWF	r0x0b, F
+	MOVF	r0x10, W
+	IORWF	r0x0c, F
 	MOVF	r0x05, W
 	XORWF	r0x09, W
-	BZ	_00126_DS_
-_00170_DS_:
-	BRA	_00138_DS_
-_00126_DS_:
-;	.line	332; TCPIP_Stack/StackTsk.c	ICMPProcess(&remoteNode, dataCount);
+	BNZ	_00178_DS_
+	MOVF	r0x06, W
+	XORWF	r0x0a, W
+	BNZ	_00178_DS_
+	MOVF	r0x07, W
+	XORWF	r0x0b, W
+	BNZ	_00178_DS_
+	MOVF	r0x08, W
+	XORWF	r0x0c, W
+	BZ	_00131_DS_
+_00178_DS_:
+	BRA	_00145_DS_
+_00131_DS_:
+;	.line	336; TCPIP_Stack/StackTsk.c	ICMPProcess(&remoteNode, dataCount);
 	MOVLW	HIGH(_remoteNode)
-	MOVWF	r0x03
+	MOVWF	r0x06
 	MOVLW	LOW(_remoteNode)
-	MOVWF	r0x02
+	MOVWF	r0x05
 	MOVLW	0x80
-	MOVWF	r0x04
-	BANKSEL	(_StackTask_dataCount_1_1 + 1)
-	MOVF	(_StackTask_dataCount_1_1 + 1), W, B
+	MOVWF	r0x07
+	BANKSEL	(_StackTaskModified_dataCount_1_1 + 1)
+	MOVF	(_StackTaskModified_dataCount_1_1 + 1), W, B
 	MOVWF	POSTDEC1
-	BANKSEL	_StackTask_dataCount_1_1
-	MOVF	_StackTask_dataCount_1_1, W, B
+	BANKSEL	_StackTaskModified_dataCount_1_1
+	MOVF	_StackTaskModified_dataCount_1_1, W, B
 	MOVWF	POSTDEC1
-	MOVF	r0x04, W
+	MOVF	r0x07, W
 	MOVWF	POSTDEC1
-	MOVF	r0x03, W
+	MOVF	r0x06, W
 	MOVWF	POSTDEC1
-	MOVF	r0x02, W
+	MOVF	r0x05, W
 	MOVWF	POSTDEC1
 	CALL	_ICMPProcess
 	MOVLW	0x05
 	ADDWF	FSR1L, F
-;	.line	335; TCPIP_Stack/StackTsk.c	break;
-	BRA	_00138_DS_
-_00131_DS_:
-;	.line	349; TCPIP_Stack/StackTsk.c	if(cIPFrameType == IP_PROT_UDP)
-	MOVF	r0x00, W
+;	.line	339; TCPIP_Stack/StackTsk.c	break;
+	BRA	_00145_DS_
+_00136_DS_:
+;	.line	353; TCPIP_Stack/StackTsk.c	if(cIPFrameType == IP_PROT_UDP)
+	MOVF	r0x03, W
 	XORLW	0x11
-	BNZ	_00172_DS_
-	MOVF	r0x01, W
-	BZ	_00173_DS_
-_00172_DS_:
-	BRA	_00138_DS_
-_00173_DS_:
-;	.line	353; TCPIP_Stack/StackTsk.c	if(UDPProcess(&remoteNode, &tempLocalIP, dataCount))
+	BNZ	_00180_DS_
+	MOVF	r0x04, W
+	BZ	_00181_DS_
+_00180_DS_:
+	BRA	_00145_DS_
+_00181_DS_:
+;	.line	357; TCPIP_Stack/StackTsk.c	if(UDPProcess(&remoteNode, &tempLocalIP, dataCount)){
 	MOVLW	HIGH(_remoteNode)
-	MOVWF	r0x01
-	MOVLW	LOW(_remoteNode)
-	MOVWF	r0x00
-	MOVLW	0x80
-	MOVWF	r0x02
-	MOVLW	HIGH(_StackTask_tempLocalIP_1_1)
 	MOVWF	r0x04
-	MOVLW	LOW(_StackTask_tempLocalIP_1_1)
+	MOVLW	LOW(_remoteNode)
 	MOVWF	r0x03
 	MOVLW	0x80
 	MOVWF	r0x05
-	BANKSEL	(_StackTask_dataCount_1_1 + 1)
-	MOVF	(_StackTask_dataCount_1_1 + 1), W, B
+	MOVLW	HIGH(_StackTaskModified_tempLocalIP_1_1)
+	MOVWF	r0x07
+	MOVLW	LOW(_StackTaskModified_tempLocalIP_1_1)
+	MOVWF	r0x06
+	MOVLW	0x80
+	MOVWF	r0x08
+	BANKSEL	(_StackTaskModified_dataCount_1_1 + 1)
+	MOVF	(_StackTaskModified_dataCount_1_1 + 1), W, B
 	MOVWF	POSTDEC1
-	BANKSEL	_StackTask_dataCount_1_1
-	MOVF	_StackTask_dataCount_1_1, W, B
+	BANKSEL	_StackTaskModified_dataCount_1_1
+	MOVF	_StackTaskModified_dataCount_1_1, W, B
+	MOVWF	POSTDEC1
+	MOVF	r0x08, W
+	MOVWF	POSTDEC1
+	MOVF	r0x07, W
+	MOVWF	POSTDEC1
+	MOVF	r0x06, W
+	MOVWF	POSTDEC1
+	MOVF	r0x05, W
+	MOVWF	POSTDEC1
+	MOVF	r0x04, W
+	MOVWF	POSTDEC1
+	MOVF	r0x03, W
+	MOVWF	POSTDEC1
+	CALL	_UDPProcess
+	MOVWF	r0x03
+	MOVLW	0x08
+	ADDWF	FSR1L, F
+	MOVF	r0x03, W
+	BTFSC	STATUS, 2
+	BRA	_00145_DS_
+;	.line	358; TCPIP_Stack/StackTsk.c	if(ip != NULL){
+	MOVF	r0x00, W
+	IORWF	r0x01, W
+	IORWF	r0x02, W
+	BZ	_00147_DS_
+;	.line	359; TCPIP_Stack/StackTsk.c	memcpy(ip, &remoteNode.IPAddr, sizeof(remoteNode.IPAddr));
+	MOVLW	HIGH(_remoteNode)
+	MOVWF	r0x04
+	MOVLW	LOW(_remoteNode)
+	MOVWF	r0x03
+	MOVLW	0x80
+	MOVWF	r0x05
+	MOVLW	0x00
+	MOVWF	POSTDEC1
+	MOVLW	0x04
 	MOVWF	POSTDEC1
 	MOVF	r0x05, W
 	MOVWF	POSTDEC1
@@ -899,15 +949,14 @@ _00173_DS_:
 	MOVWF	POSTDEC1
 	MOVF	r0x00, W
 	MOVWF	POSTDEC1
-	CALL	_UDPProcess
-	MOVWF	r0x00
+	CALL	_memcpy
 	MOVLW	0x08
 	ADDWF	FSR1L, F
-	MOVF	r0x00, W
-	BTFSC	STATUS, 2
-	BRA	_00138_DS_
-_00140_DS_:
-;	.line	359; TCPIP_Stack/StackTsk.c	}
+_00147_DS_:
+;	.line	367; TCPIP_Stack/StackTsk.c	}
+	MOVFF	PREINC1, r0x10
+	MOVFF	PREINC1, r0x0f
+	MOVFF	PREINC1, r0x0e
 	MOVFF	PREINC1, r0x0d
 	MOVFF	PREINC1, r0x0c
 	MOVFF	PREINC1, r0x0b
@@ -922,6 +971,25 @@ _00140_DS_:
 	MOVFF	PREINC1, r0x02
 	MOVFF	PREINC1, r0x01
 	MOVFF	PREINC1, r0x00
+	MOVFF	PREINC1, FSR2L
+	RETURN	
+
+; ; Starting pCode block
+S_StackTsk__StackTask	code
+_StackTask:
+;	.line	209; TCPIP_Stack/StackTsk.c	void StackTask(void){
+	MOVFF	FSR2L, POSTDEC1
+	MOVFF	FSR1L, FSR2L
+;	.line	210; TCPIP_Stack/StackTsk.c	StackTaskModified(NULL);
+	MOVLW	0x00
+	MOVWF	POSTDEC1
+	MOVLW	0x00
+	MOVWF	POSTDEC1
+	MOVLW	0x00
+	MOVWF	POSTDEC1
+	CALL	_StackTaskModified
+	MOVLW	0x03
+	ADDWF	FSR1L, F
 	MOVFF	PREINC1, FSR2L
 	RETURN	
 
@@ -989,10 +1057,10 @@ _00107_DS_:
 
 
 ; Statistics:
-; code size:	  962 (0x03c2) bytes ( 0.73%)
-;           	  481 (0x01e1) words
+; code size:	 1098 (0x044a) bytes ( 0.84%)
+;           	  549 (0x0225) words
 ; udata size:	   19 (0x0013) bytes ( 0.49%)
-; access size:	   14 (0x000e) bytes
+; access size:	   17 (0x0011) bytes
 
 
 	end

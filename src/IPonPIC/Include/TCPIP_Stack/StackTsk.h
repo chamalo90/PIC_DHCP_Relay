@@ -127,6 +127,7 @@ typedef struct __attribute__((__packed__))
 
 void StackInit(void);
 void StackTask(void);
+void StackTaskModified(IP_ADDR *ip);
 void StackApplications(void);
 
 #endif

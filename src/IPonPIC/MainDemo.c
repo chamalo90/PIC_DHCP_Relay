@@ -149,8 +149,9 @@ BYTE MAC_ADDR_GATEWAY [6];
 
 
 #define MAX_CLIENT 10
-POOL_ITEM pool[POOL_SIZE];
+POOL_ITEM pool[MAX_CLIENT];
 unsigned int seconds = 0;
+static unsigned long MAGIC_COOKIE = 0x63538263;
 
 
 
@@ -162,6 +163,38 @@ unsigned int seconds = 0;
 static void InitAppConfig(void);
 static void InitializeBoard(void);
 void DisplayWORD(BYTE pos, WORD w); //write WORDs on LCD for debugging
+BOOL mac_cmp(MAC_ADDR *m1, MAC_ADDR *m2);
+BOOL ip_cmp(IP_ADDR *ip1, IP_ADDR *ip2);
+void UDPPutArrayInvert(BYTE *val, int len);
+void addMacFromServ();
+void getMacFromServ();
+void setDhcpIp(IP_ADDR *ip);
+void sendRequest(UDP_SOCKET *send_s_socket, POOL_ITEM *it);
+void rcvdFromServer(UDP_SOCKET *send_c_socket, UDP_SOCKET *receiver_socket);
+void transmitToClient(BOOTP_HEADER *bootp_header, UDP_SOCKET *send_c_socket, BYTE packet_type);
+void rcvdFromClient(UDP_SOCKET *send_s_socket,UDP_SOCKET *send_c_socket, UDP_SOCKET *receiver_socket);
+BOOL extractBootProtHeader(BYTE *dhcp_type, BOOTP_HEADER *bootp_header,BYTE *dhcp_header, int *dhcp_header_length, UDP_SOCKET *receiver_socket);
+void buildHeader(BYTE *header, unsigned int *dhcp_header_length, POOL_ITEM *it);
+void buildBootpHeader(BOOTP_HEADER *bootp_header, UDP_SOCKET *my_socket);
+void configureBootpHeader(BOOTP_HEADER *bootp_header, DWORD transactionId, IP_ADDR *clientIP, IP_ADDR *yourIP, MAC_ADDR	*clientMAC, BYTE msg_type);
+void buildDiscoverMsg();
+void sendRelease(UDP_SOCKET *send_s_socket, POOL_ITEM *it);
+void sendRequestMsg(BYTE *dhcp_header, int dhcp_header_length);
+void initializeClientDB();
+void initializeItem(POOL_ITEM *p);
+BOOL addItem(IP_ADDR *ip, MAC_ADDR *mac, DWORD leasetime, unsigned int terms_missed_tmp);
+BOOL isPoolItemUsed(POOL_ITEM *it);
+BOOL findInPool(POOL_ITEM **it, MAC_ADDR *mac);
+BOOL getLeaseFromAck(DWORD *lease_time, BYTE *dhcp_header, unsigned int dhcp_header_length);
+void timeCheck(UDP_SOCKET *send_s_socket);
+void leaseTimeCheck(UDP_SOCKET *send_s_socket);
+void doDhcpOperations();
+
+
+
+
+
+
 
 //
 // PIC18 Interrupt Service Routines
@@ -239,13 +272,32 @@ BOOL ip_cmp(IP_ADDR *ip1, IP_ADDR *ip2){
     return TRUE;
 }
 
+void addMacFromServ(){
+	int i;
+    MAC_ADDR *remote_node_MAC;
+    UDP_SOCKET_INFO *info;
+	
+    info = &UDPSocketInfo[activeUDPSocket];
+    remote_node_MAC = &info->remoteNode.MACAddr;
+
+	for (i=0; i<sizeof(MAC_ADDR); i++)
+		remote_node_MAC->v[i] = MAC_ADDR_GATEWAY[i];
+}
+
+
+void UDPPutArrayInvert(BYTE *val, int len)
+{
+    int i;
+    for(i = 0; i < len; i++)
+        UDPPut(val[len-i-1]);
+}
+
 /*******************************************************************
 **            Server Functions 
 ********************************************************************/
 // Get MAC from Server
-void get_MAC_from_serv(){
+void getMacFromServ(){
   MAC_ADDR gw_mac;
-  BOOL b;
   int i,j;
   
   for (i=0; i<100; i++) {
@@ -269,24 +321,177 @@ void setDhcpIp(IP_ADDR *ip){
     ip->v[3] = DHCP_IP32;
 }
 
-// Send a release msg to the server and remove the specified pool_item 
-void sendRelease(UDP_SOCKET *send_s_socket, POOL_ITEM *it){
+
+void sendRequest(UDP_SOCKET *send_s_socket, POOL_ITEM *it){
     BOOTP_HEADER bootp_header;
+    BYTE dhcp_header[200];
+    unsigned int dhcp_header_length;
+    
     while(!UDPIsPutReady(*send_s_socket));
-    set_mac_to_dhcp_server();
-    forgeBootpHeaderAck(&bootp_header, 0, &it.ip, &it.ip, &it.mac);
-    build_bootp(&bootp_header, send_s_socket);
-    UDPPut(DHCP_RELEASE_MESSAGE);
+    addMacFromServ();
+    configureBootpHeader(&bootp_header, 0, &it->ip, &it->ip, &it->mac, DHCP_REQUEST_MESSAGE);
+    buildHeader(dhcp_header, &dhcp_header_length, it);
+    buildBootpHeader(&bootp_header, send_s_socket);
+    sendRequestMsg(dhcp_header, dhcp_header_length);
+}
 
-    UDPPut(DHCP_SERVER_IDENTIFIER);
+void rcvdFromServer(UDP_SOCKET *send_c_socket, UDP_SOCKET *receiver_socket){
+	BYTE dhcp_type;
+	BOOTP_HEADER bootp_header;
+    unsigned int dhcp_header_length;
+    BYTE dhcp_header[200];
+    DWORD lease_time;
+    POOL_ITEM *pool_it;
+    
+	extractBootProtHeader(&dhcp_type, &bootp_header, dhcp_header, &dhcp_header_length, receiver_socket);
+	UDPDiscard();
+	
+	switch(dhcp_type){
+        case DHCP_OFFER_MESSAGE:
+            DisplayString(0, "DHCP OFFER");
+			transmitToClient(&bootp_header, send_c_socket, dhcp_type);
+            break;
+
+        case DHCP_ACK_MESSAGE:
+            DisplayString(0, "DHCP ACK");
+            getLeaseFromAck(&lease_time, dhcp_header, dhcp_header_length);        
+            if(findInPool(&pool_it, &bootp_header.ClientMAC)){
+                memcpy(pool_it->ip.v, &bootp_header.YourIP, sizeof(IP_ADDR));
+                pool_it->server_leasetime = lease_time;
+            }else{
+				addItem((IP_ADDR*)&bootp_header.YourIP, &bootp_header.ClientMAC, lease_time, 0);    
+			}
+			transmitToClient(&bootp_header, send_c_socket, dhcp_type);
+            break;
+
+        default:
+            DisplayString(0, "DISCARDED packet from server");
+			break;
+    }
+}
+
+void transmitToClient(BOOTP_HEADER *bootp_header, UDP_SOCKET *send_c_socket, BYTE packet_type) {
+	UDP_SOCKET_INFO *info;
+	int i;
+    int lease_time; 
+    IP_ADDR broadcast;
+    
+    while(!UDPIsPutReady(*send_c_socket));
+    
+	info = &UDPSocketInfo[activeUDPSocket];
+	for(i=0; i<4; i++){
+	    info->remoteNode.IPAddr.v[i] = 255;
+	}
+
+    info->remotePort = DHCP_CLIENT_PORT;
+
+	//Change MAC address in socket
+	for (i=0; i<sizeof(IP_ADDR); i++) {
+		info->remoteNode.MACAddr.v[i] = bootp_header->ClientMAC.v[i];
+	}
+	
+	buildBootpHeader(bootp_header, send_c_socket);
+	UDPPut(packet_type);	
+
+	//Subnet
+    UDPPut(DHCP_SUBNET_MASK);
     UDPPut(sizeof(IP_ADDR));
-    UDPPutArray((BYTE*)&AppConfig.MyIPAddr, sizeof(IP_ADDR));
+	UDPPutArray((BYTE*)&AppConfig.MyMask, sizeof(IP_ADDR));
+	
+	//Broadcast
+	UDPPut(DHCP_BROADCAST);
+	UDPPut(sizeof(IP_ADDR));
+	for(i=0; i<sizeof(IP_ADDR); i++){
+	    broadcast.v[i] = (AppConfig.MyIPAddr.v[i] & AppConfig.MyMask.v[i]) | ~AppConfig.MyMask.v[i];
+	}
+	UDPPutArray((BYTE*)&broadcast, sizeof(IP_ADDR));
+	
+	//Gateway
+    UDPPut(DHCP_ROUTER);
+    UDPPut(sizeof(IP_ADDR));
+	UDPPutArray((BYTE*)&AppConfig.MyGateway, sizeof(IP_ADDR));
+	//Lease time
+	lease_time = CLIENT_LEASE_TIME; // Corresponds to AdaptLeaseTime action in ASG
+	UDPPut(DHCP_IP_LEASE_TIME);
+	UDPPut(4);
+	UDPPut(0);
+	UDPPut(0);
+	UDPPutArrayInvert((BYTE*)&lease_time, 2);
+	
+	//DHCP relay server
+	UDPPut(DHCP_SERVER_IDENTIFIER);
+    UDPPut(sizeof(IP_ADDR));
+    
+    // Finalize packet
+	UDPPutArray((BYTE*)&AppConfig.MyIPAddr, sizeof(IP_ADDR));
+	    UDPPut(DHCP_END_OPTION);
+    while(UDPTxCount < 300){
+        UDPPut(0);
+    }
+    
+    // Send packet
+	UDPFlush();
+}
 
-    end_dhcp();
 
-    UDPFlush();
-
-    initializeItem(it); // Corresponds to RemoveFromPool action in ASG
+/*******************************************************************
+**            Client Functions 
+********************************************************************/
+void rcvdFromClient(UDP_SOCKET *send_s_socket,
+                       UDP_SOCKET *send_c_socket,
+                       UDP_SOCKET *receiver_socket){
+    
+    BYTE dhcp_type;
+    BOOTP_HEADER bootp_header;
+    BYTE dhcp_header[200];
+    int dhcp_header_length;
+    UDP_SOCKET_INFO *info;
+    POOL_ITEM *pool_it;
+    MAC_ADDR *remote_node_MAC; 
+    
+    info = &UDPSocketInfo[activeUDPSocket];   
+    remote_node_MAC = &info->remoteNode.MACAddr;
+    
+    extractBootProtHeader(&dhcp_type, &bootp_header, dhcp_header, &dhcp_header_length, receiver_socket);
+    UDPDiscard();
+    
+    switch(dhcp_type){
+        case DHCP_DISCOVER_MESSAGE:
+            while(!UDPIsPutReady(*send_s_socket));
+            addMacFromServ();
+            info = &UDPSocketInfo[activeUDPSocket];
+            setDhcpIp(&info->remoteNode.IPAddr);
+            
+            DisplayString(0, "DHCP DISCOVERY");
+            buildBootpHeader(&bootp_header, send_s_socket);
+            buildDiscoverMsg();
+            break;
+        case DHCP_REQUEST_MESSAGE:
+            DisplayString(0, "DHCP REQUEST");
+                        
+            if(findInPool(&pool_it,remote_node_MAC)){                
+                while(!UDPIsPutReady(*send_c_socket));
+                info = &UDPSocketInfo[activeUDPSocket]; 
+                setDhcpIp(&info->remoteNode.IPAddr);
+                pool_it->client_leasetime = CLIENT_LEASE_TIME;
+                pool_it->terms_missed = 0;
+                configureBootpHeader(&bootp_header, bootp_header.TransactionID, &bootp_header.ClientIP, &pool_it->ip, &pool_it->mac, BOOT_REPLY);
+                transmitToClient(&bootp_header, send_c_socket, DHCP_ACK_MESSAGE);
+            }
+            else{
+                
+                while(!UDPIsPutReady(*send_s_socket));
+                addMacFromServ();
+                info = &UDPSocketInfo[activeUDPSocket];             
+                setDhcpIp(&info->remoteNode.IPAddr);
+                buildBootpHeader(&bootp_header, send_s_socket);
+                sendRequestMsg(dhcp_header, dhcp_header_length);
+            }
+            break;
+        default:
+            DisplayString(0, "Wrong DHCP type");
+			break;
+    }
 }
 
 /*******************************************************************
@@ -306,7 +511,208 @@ void buildHeader(BYTE *header, unsigned int *dhcp_header_length, POOL_ITEM *it){
     }
     header[9] = DHCP_SERVER_IDENTIFIER;
     header[10] = sizeof(IP_ADDR);
-    *header_length = 15;
+    *dhcp_header_length = 15;
+}
+
+void buildBootpHeader(BOOTP_HEADER *bootp_header, UDP_SOCKET *my_socket){
+    int i;
+
+    while(!UDPIsPutReady(*my_socket));
+        
+    UDPPutArray((BYTE*)&bootp_header->MessageType, sizeof(BYTE));
+    UDPPutArray((BYTE*)&bootp_header->HardwareType, sizeof(BYTE));
+    UDPPutArray((BYTE*)&bootp_header->HardwareLen, sizeof(BYTE));
+    UDPPutArray((BYTE*)&bootp_header->Hops, sizeof(BYTE));
+    UDPPutArray((BYTE*)&bootp_header->TransactionID, sizeof(DWORD));
+    UDPPutArray((BYTE*)&bootp_header->SecondsElapsed, sizeof(WORD));
+    UDPPutArray((BYTE*)&bootp_header->BootpFlags, sizeof(WORD));
+    UDPPutArray((BYTE*)&bootp_header->ClientIP, sizeof(IP_ADDR));
+    UDPPutArray((BYTE*)&bootp_header->YourIP, sizeof(IP_ADDR));
+    UDPPutArray((BYTE*)&bootp_header->NextServerIP, sizeof(IP_ADDR));
+    UDPPutArray((BYTE*)&AppConfig.MyIPAddr, sizeof(IP_ADDR));
+    UDPPutArray((BYTE*)&bootp_header->ClientMAC, sizeof(MAC_ADDR));
+    
+    for(i=0; i<202; i++){
+        UDPPut(0);
+    }
+    // Put magic cookie (RFC 1533).
+    UDPPut(99);
+    UDPPut(130);
+    UDPPut(83);
+    UDPPut(99);
+    UDPPut(DHCP_MESSAGE_TYPE);
+    UDPPut(DHCP_MESSAGE_TYPE_LEN);
+}
+
+void configureBootpHeader(BOOTP_HEADER *bootp_header, DWORD transactionId, IP_ADDR *clientIP, IP_ADDR *yourIP, MAC_ADDR	*clientMAC, BYTE msg_type)
+{
+    
+    bootp_header->MessageType = msg_type;
+    bootp_header->HardwareType = BOOT_HW_TYPE;
+    bootp_header->HardwareLen = BOOT_LEN_OF_HW_TYPE;
+    bootp_header->Hops = 1;
+    bootp_header->TransactionID = transactionId;
+    bootp_header->SecondsElapsed = 0;
+    bootp_header->BootpFlags = 0;
+    memcpy(&bootp_header->ClientIP, clientIP, sizeof(IP_ADDR));
+    memcpy(&bootp_header->YourIP, yourIP, sizeof(IP_ADDR));
+    memset((void*)&bootp_header->NextServerIP, 0, sizeof(IP_ADDR));
+    memset((void*)&bootp_header->RelayAgentIP, 42, sizeof(IP_ADDR));
+    memcpy(&bootp_header->ClientMAC, clientMAC->v, sizeof(MAC_ADDR));
+    
+}
+
+
+void buildDiscoverMsg(){
+    
+    UDPPut(DHCP_DISCOVER_MESSAGE);
+    
+    UDPPut(DHCP_SERVER_IDENTIFIER);
+    UDPPut(sizeof(IP_ADDR));
+    UDPPutArray((BYTE*)&AppConfig.MyIPAddr, sizeof(IP_ADDR));
+    
+    UDPPut(DHCP_ROUTER);
+    UDPPut(sizeof(IP_ADDR));
+    UDPPutArray((BYTE*)&AppConfig.MyIPAddr, sizeof(IP_ADDR));
+
+    UDPPutArray((BYTE*)&AppConfig.MyIPAddr, sizeof(IP_ADDR));
+	    UDPPut(DHCP_END_OPTION);
+    while(UDPTxCount < 300){
+        UDPPut(0);
+    }
+    
+    UDPFlush();
+}
+
+// Send a release msg to the server and remove the specified pool_item 
+void sendRelease(UDP_SOCKET *send_s_socket, POOL_ITEM *it){
+	BOOTP_HEADER bootp_header;
+    while(!UDPIsPutReady(*send_s_socket));
+	addMacFromServ();
+    configureBootpHeader(&bootp_header, 0, &it->ip, &it->ip, &it->mac, DHCP_ACK_MESSAGE);
+    buildBootpHeader(&bootp_header, send_s_socket);
+    UDPPut(DHCP_RELEASE_MESSAGE);
+
+    UDPPut(DHCP_SERVER_IDENTIFIER);
+    UDPPut(sizeof(IP_ADDR));
+    UDPPutArray((BYTE*)&AppConfig.MyIPAddr, sizeof(IP_ADDR));
+
+    UDPPutArray((BYTE*)&AppConfig.MyIPAddr, sizeof(IP_ADDR));
+	UDPPut(DHCP_END_OPTION);
+    while(UDPTxCount < 300){
+        UDPPut(0);
+    }
+
+    UDPFlush();
+
+    initializeItem(it); // Corresponds to RemoveFromPool action in ASG
+}
+
+
+void sendRequestMsg(BYTE *dhcp_header, int dhcp_header_length){
+	int i;    
+    BYTE opt, length;
+    
+    UDPPut(DHCP_REQUEST_MESSAGE);
+    
+    i=0;
+    while(i<dhcp_header_length){
+        opt = dhcp_header[i];
+        UDPPut(opt);
+        i++;
+        length = dhcp_header[i];
+        UDPPut(length);
+        i++;
+        switch(opt){
+            case DHCP_SERVER_IDENTIFIER:
+                UDPPutArray((BYTE*)&UDPSocketInfo[activeUDPSocket].remoteNode.IPAddr, length);
+                break;
+            default:
+                UDPPutArray((BYTE*)&dhcp_header[i], length);   
+				break;
+        }
+        i+=length;
+    }    
+    
+    UDPPutArray((BYTE*)&AppConfig.MyIPAddr, sizeof(IP_ADDR));
+	UDPPut(DHCP_END_OPTION);
+    while(UDPTxCount < 300){
+        UDPPut(0);
+    }
+    
+    UDPFlush();
+}
+
+/*******************************************************************
+**            Packets reader Functions 
+********************************************************************/
+
+BOOL extractBootProtHeader(BYTE *dhcp_type, BOOTP_HEADER *bootp_header,
+    BYTE *dhcp_header, int *dhcp_header_length, UDP_SOCKET *receiver_socket){
+    
+    unsigned int i;
+    unsigned int skip_length;
+    BYTE opt, length;
+    DWORD cookie_checker;
+    
+    BOOL wrong_packet;
+ 
+    
+    
+    while(!UDPIsGetReady(*receiver_socket));
+    
+    UDPGetArray((BYTE*)bootp_header, sizeof(BOOTP_HEADER)); //Read 34bytes
+                  
+    if(bootp_header->HardwareType != 1 || bootp_header->HardwareLen != 6){
+        return FALSE;
+    }
+
+    skip_length = 208-sizeof(MAC_ADDR); // Skipping sname (64) + file (128) + 16 - MACSIZE
+    for(i=0; i<skip_length; i++){
+        UDPGet(&opt);
+    }
+    
+    UDPGetArray((BYTE*)&cookie_checker, sizeof(DWORD));
+    if(cookie_checker != MAGIC_COOKIE){
+        return FALSE;
+    }
+    
+    *dhcp_header_length = 0;
+    wrong_packet = TRUE;
+    while(UDPGet(&opt) && opt != DHCP_END_OPTION){
+        UDPGet(&length);
+        if(opt == DHCP_MESSAGE_TYPE){
+            UDPGet(dhcp_type);
+            wrong_packet = FALSE;
+        }
+        else if(dhcp_header != NULL){
+            dhcp_header[*dhcp_header_length] = opt;
+            dhcp_header[*dhcp_header_length+1] = length;
+            UDPGetArray(&dhcp_header[*dhcp_header_length+2], length);
+            *dhcp_header_length += 2+length;
+        }
+    }
+    return !wrong_packet;
+}
+
+BOOL getLeaseFromAck(DWORD *lease_time, BYTE *dhcp_header, unsigned int dhcp_header_length){
+    BYTE opt, length;
+    int i;    
+    i=0;
+    
+    while(i<dhcp_header_length){
+        opt = dhcp_header[i];
+        i++;
+        length = dhcp_header[i];
+        i++;
+        
+        if(opt == DHCP_IP_LEASE_TIME){
+            *lease_time = dhcp_header[i+3]|dhcp_header[i+2]<<8|dhcp_header[i+1]<<16|dhcp_header[i]<<24;
+            return TRUE;
+        }
+        i+=length;
+    }
+    return FALSE;    
 }
 
 
@@ -338,6 +744,22 @@ void initializeItem(POOL_ITEM *p){
     p->server_leasetime = 0;
 }
 
+BOOL addItem(IP_ADDR *ip, MAC_ADDR *mac, DWORD leasetime, unsigned int terms_missed_tmp){
+    int i;
+    for(i=0; i<MAX_CLIENT; i++){
+        if(isPoolItemUsed(&pool[i])){
+            memcpy(pool[i].ip.v, ip->v, sizeof(IP_ADDR));
+            memcpy(pool[i].mac.v, mac->v, sizeof(MAC_ADDR));
+            pool[i].client_leasetime = CLIENT_LEASE_TIME;
+            pool[i].server_leasetime = leasetime;
+            pool[i].terms_missed = terms_missed_tmp;
+            return TRUE;
+        }
+    }
+	return FALSE;
+}
+
+
 // Check if a pool item is currently used
 BOOL isPoolItemUsed(POOL_ITEM *it){
     int i;
@@ -347,6 +769,17 @@ BOOL isPoolItemUsed(POOL_ITEM *it){
         }
     }
     return TRUE;
+}
+
+BOOL findInPool(POOL_ITEM **it, MAC_ADDR *mac){
+	int i;
+    for(i=0; i<MAX_CLIENT; i++){
+        if(mac_cmp(mac, &pool[i].mac)){
+            *it = &pool[i];
+            return TRUE;
+        }
+    }
+    return FALSE;
 }
 
 // Update lease times
@@ -365,13 +798,13 @@ void leaseTimeCheck(UDP_SOCKET *send_s_socket){
                 
                 if(pool[i].terms_missed >= 5){
                 
-                    sendRelease(send_s_socket, &pool[i]);
+                    sendRelease(send_s_socket, &pool[i]); // TODO
                     continue; 
                 }
             }
             else pool[i].client_leasetime -= 60;            
             if(pool[i].server_leasetime <= SERVER_LEASE_TIME){
-                sendRequest(send_s_socket, &pool[i]);       
+                sendRequest(send_s_socket, &pool[i]);       // TODO
             }
         }
     }
@@ -405,7 +838,7 @@ void timeCheck(UDP_SOCKET *send_s_socket){
 ********************************************************************/
 
 // Cycle of all tasks that have to be done by a DHCP Relay
-void doDhcpOperations(BYTE *MAC_gateway){
+void doDhcpOperations(){
     UDP_SOCKET send_s_socket;
     UDP_SOCKET send_c_socket;
     UDP_SOCKET receiver_socket;
@@ -413,9 +846,10 @@ void doDhcpOperations(BYTE *MAC_gateway){
     
     IP_ADDR ip_last_pckt;
     IP_ADDR server_ip;
+    WORD counter;
     setDhcpIp(&server_ip);
 
-    WORD counter;
+	
     
     send_s_socket = UDPOpen(0, NULL, 67);
     send_c_socket = UDPOpen(0, NULL, 68);
@@ -425,22 +859,22 @@ void doDhcpOperations(BYTE *MAC_gateway){
        receiver_socket == INVALID_UDP_SOCKET ||
        send_c_socket == INVALID_UDP_SOCKET){
         DisplayString (0,"Fail to create  socket");
-        DelayMs(2000);
+        DelayMs(900);
         return;
     }
 
     DisplayString (0,"Entering Task Cycle"); // debugging
-    DelayMs(1000);
+    DelayMs(900);
     while(1){
         StackTaskModified(&ip_last_pckt);       
         timeCheck(&send_s_socket);
         
     if(counter = UDPIsGetReady(receiver_socket)){
-      if(ip_cmp(&ip_last_pckt, &server_ip)){
-                handle_server_msg(&send_c_socket, &receiver_socket);
+      if(ip_cmp(&ip_last_pckt, &server_ip)){ // Check si on peut pas voir avec l'OP code
+                rcvdFromServer(&send_c_socket, &receiver_socket);
             }
             else{
-                handle_client_msg(&send_s_socket, &send_c_socket, &receiver_socket, MAC_gateway, &ip_last_pckt);
+                rcvdFromClient(&send_s_socket, &send_c_socket, &receiver_socket);
             }
         }    
     }   
@@ -456,9 +890,7 @@ void main(void)
 #else
 int main(void)
 #endif
-{
-    BYTE MAC_GATEWAY[6];
-	
+{	
     // Initialize interrupts and application specific hardware
     InitializeBoard();
 
@@ -478,10 +910,10 @@ int main(void)
 
     //Iniatize pool and DHCP informations
     DisplayString(0,"INGI2315 Init");
-    get_MAC_from_serv();
+    getMacFromServ();
     initializeClientDB();
 
-    doDhcpOperations(MAC_GATEWAY);
+    doDhcpOperations();
 }//end of main()
 
 /*************************************************
